@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Contract Writer</title>
+  <script src="https://cdn.jsdelivr.net/npm/ethers@5.7.2/dist/ethers.umd.min.js"></script>
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+</head>
+<body class="bg-gray-100 p-6">
+  <div class="max-w-2xl mx-auto bg-white shadow-lg rounded-xl p-6">
+    <h2 class="text-2xl font-bold mb-4 text-center">Contract Writer</h2>
+
+    <label class="block text-sm font-medium">RPC URL</label>
+    <input id="rpcUrl" class="border p-2 w-full rounded" placeholder="Enter RPC URL">
+
+    <label class="block text-sm font-medium mt-3">Private Key</label>
+    <input id="privateKey" class="border p-2 w-full rounded" placeholder="Enter Private Key">
+
+    <label class="block text-sm font-medium mt-3">Contract Address</label>
+    <input id="contractAddress" class="border p-2 w-full rounded" placeholder="Enter Contract Address">
+
+    <label class="block text-sm font-medium mt-3">ABI</label>
+    <textarea id="abi" rows="6" class="border p-2 w-full rounded" placeholder='Paste contract ABI JSON here'></textarea>
+    <button id="loadAbi" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded mt-2 w-full">Load Functions</button>
+
+    <label class="block text-sm font-medium mt-3">Functions</label>
+    <select id="functionSelect" class="border p-2 w-full rounded"></select>
+
+    <div id="inputsContainer" class="mt-4"></div>
+    <button id="executeButton" class="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded mt-4 w-full">Execute</button>
+
+    <div id="spinner" class="hidden flex justify-center mt-4">
+      <svg class="animate-spin h-8 w-8 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+      </svg>
+    </div>
+
+    <h3 class="text-lg font-semibold mt-6">Log</h3>
+    <div id="log" class="bg-gray-100 p-3 rounded h-48 overflow-auto text-sm whitespace-pre-wrap"></div>
+  </div>
+
+  <script>
+    let provider, wallet, contract, abiJson;
+
+    function log(msg) {
+      document.getElementById('log').textContent += `\n${msg}`;
+    }
+
+    function showSpinner(show) {
+      document.getElementById('spinner').classList.toggle('hidden', !show);
+    }
+
+    document.getElementById('loadAbi').addEventListener('click', async () => {
+      const abi = document.getElementById('abi').value;
+      try {
+        abiJson = JSON.parse(abi);
+        const functionSelect = document.getElementById('functionSelect');
+        functionSelect.innerHTML = '';
+        abiJson.filter(f => f.type === 'function').forEach(fn => {
+          const option = document.createElement('option');
+          option.value = fn.name;
+          option.textContent = `${fn.name} (${fn.stateMutability})`;
+          functionSelect.appendChild(option);
+        });
+        log('✅ ABI loaded, functions listed.');
+      } catch (err) {
+        log('❌ Invalid ABI JSON');
+      }
+    });
+
+    document.getElementById('functionSelect').addEventListener('change', async () => {
+      const selectedName = document.getElementById('functionSelect').value;
+      const fn = abiJson.find(f => f.name === selectedName);
+      const container = document.getElementById('inputsContainer');
+      container.innerHTML = '';
+
+      if (fn && fn.inputs) {
+        fn.inputs.forEach((input, i) => {
+          const label = document.createElement('label');
+          label.textContent = `${input.name} (${input.type})`;
+          label.classList = 'block text-sm font-medium mt-2';
+          const field = document.createElement('input');
+          field.id = `input_${i}`;
+          field.classList = 'border p-2 w-full rounded';
+          container.appendChild(label);
+          container.appendChild(field);
+        });
+      }
+
+      if (fn && (fn.stateMutability === 'view' || fn.stateMutability === 'pure')) {
+        const rpcUrl = document.getElementById('rpcUrl').value;
+        const privateKey = document.getElementById('privateKey').value;
+        const contractAddress = document.getElementById('contractAddress').value;
+        if (!rpcUrl || !privateKey || !contractAddress) {
+          log('⚠️ Please enter RPC URL, Private Key, and Contract Address first.');
+          return;
+        }
+        provider = new ethers.providers.JsonRpcProvider(rpcUrl);
+        wallet = new ethers.Wallet(privateKey, provider);
+        contract = new ethers.Contract(contractAddress, abiJson, wallet);
+
+        try {
+          showSpinner(true);
+          const inputs = fn.inputs.map((_, i) => document.getElementById(`input_${i}`).value);
+          const result = await contract[fn.name](...inputs);
+          log(`📖 Result: ${result}`);
+        } catch (err) {
+          log(`❌ Error: ${err.message}`);
+        } finally {
+          showSpinner(false);
+        }
+      }
+    });
+
+    document.getElementById('executeButton').addEventListener('click', async () => {
+      const rpcUrl = document.getElementById('rpcUrl').value;
+      const privateKey = document.getElementById('privateKey').value;
+      const contractAddress = document.getElementById('contractAddress').value;
+      const selectedName = document.getElementById('functionSelect').value;
+      const fn = abiJson.find(f => f.name === selectedName);
+
+      if (!rpcUrl || !privateKey || !contractAddress || !fn) {
+        log('⚠️ Missing required fields');
+        return;
+      }
+
+      provider = new ethers.providers.JsonRpcProvider(rpcUrl);
+      wallet = new ethers.Wallet(privateKey, provider);
+      contract = new ethers.Contract(contractAddress, abiJson, wallet);
+
+      const inputs = fn.inputs.map((_, i) => document.getElementById(`input_${i}`).value);
+
+      try {
+        showSpinner(true);
+        if (fn.stateMutability === 'view' || fn.stateMutability === 'pure') {
+          const result = await contract[fn.name](...inputs);
+          log(`📖 Result: ${result}`);
+        } else {
+          const tx = await contract[fn.name](...inputs);
+          log(`🚀 Transaction sent: ${tx.hash}`);
+          const receipt = await tx.wait();
+          log(`✅ Transaction confirmed: ${receipt.transactionHash}`);
+        }
+      } catch (err) {
+        log(`❌ Error: ${err.message}`);
+      } finally {
+        showSpinner(false);
+      }
+    });
+  </script>
+</body>
+</html>
